@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "DiscordClone.Application/1.0.0": {
+        "dependencies": {
+          "DiscordClone.Domain": "1.0.0"
+        },
+        "runtime": {
+          "DiscordClone.Application.dll": {}
+        }
+      },
+      "DiscordClone.Domain/1.0.0": {
+        "runtime": {
+          "DiscordClone.Domain.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "DiscordClone.Application/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DiscordClone.Domain/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

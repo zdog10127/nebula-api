@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "ViBB/4ZtPXgxV2riK6/RuEhOJrkCeKbuo2o2WjPyQ/0=",
+  "Source": "DiscordClone.Api",
+  "BasePath": "_content/DiscordClone.Api",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}
