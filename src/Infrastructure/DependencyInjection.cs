@@ -2,6 +2,7 @@ using DiscordClone.Application.Attachments;
 using DiscordClone.Application.Auth;
 using DiscordClone.Application.Gifs;
 using DiscordClone.Application.Messages;
+using DiscordClone.Application.Music;
 using DiscordClone.Application.Presence;
 using DiscordClone.Application.Push;
 using DiscordClone.Application.Servers;
@@ -12,6 +13,7 @@ using DiscordClone.Infrastructure.Attachments;
 using DiscordClone.Infrastructure.Auth;
 using DiscordClone.Infrastructure.Gifs;
 using DiscordClone.Infrastructure.Messages;
+using DiscordClone.Infrastructure.Music;
 using DiscordClone.Infrastructure.Persistence;
 using DiscordClone.Infrastructure.Presence;
 using DiscordClone.Infrastructure.Push;
@@ -56,6 +58,8 @@ public static class DependencyInjection
 
         services.AddSingleton(TenorOptions.FromConfiguration(configuration));
         services.AddHttpClient<IGifService, TenorGifService>();
+
+        services.AddHttpClient<IMusicService, YoutubeMusicService>();
 
         services.AddSingleton(PushOptions.FromConfiguration(configuration));
         services.AddScoped<IPushService, PushService>();

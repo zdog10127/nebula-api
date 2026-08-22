@@ -63,3 +63,4 @@ C:\Users\gabri\AppData\Local\Temp\claude\C--Users-gabri-OneDrive-Documentos-Trab
 C:\Users\gabri\AppData\Local\Temp\claude\C--Users-gabri-OneDrive-Documentos-Trabalho-NovaCode-DiscordClone\d4ea2484-2e5b-4760-aa44-59cfe24a33a0\scratchpad\apibuild-final\DiscordClone.Infrastructure.deps.json
 C:\Users\gabri\AppData\Local\Temp\claude\C--Users-gabri-OneDrive-Documentos-Trabalho-NovaCode-DiscordClone\d4ea2484-2e5b-4760-aa44-59cfe24a33a0\scratchpad\apibuild-final\DiscordClone.Infrastructure.dll
 C:\Users\gabri\AppData\Local\Temp\claude\C--Users-gabri-OneDrive-Documentos-Trabalho-NovaCode-DiscordClone\d4ea2484-2e5b-4760-aa44-59cfe24a33a0\scratchpad\apibuild-final\DiscordClone.Infrastructure.pdb
+C:\Users\gabri\OneDrive\Documentos\Trabalho\NovaCode\DiscordClone\backend\src\Infrastructure\obj\Debug\net8.0\DiscordClone.Infrastructure.sourcelink.json

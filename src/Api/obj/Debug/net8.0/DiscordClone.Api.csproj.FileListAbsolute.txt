@@ -193,3 +193,4 @@ C:\Users\gabri\AppData\Local\Temp\claude\C--Users-gabri-OneDrive-Documentos-Trab
 C:\Users\gabri\AppData\Local\Temp\claude\C--Users-gabri-OneDrive-Documentos-Trabalho-NovaCode-DiscordClone\d4ea2484-2e5b-4760-aa44-59cfe24a33a0\scratchpad\apibuild-final\DiscordClone.Api.pdb
 C:\Users\gabri\OneDrive\Documentos\Trabalho\NovaCode\DiscordClone\backend\src\Api\bin\Debug\net8.0\BouncyCastle.Crypto.dll
 C:\Users\gabri\OneDrive\Documentos\Trabalho\NovaCode\DiscordClone\backend\src\Api\bin\Debug\net8.0\WebPush.dll
+C:\Users\gabri\OneDrive\Documentos\Trabalho\NovaCode\DiscordClone\backend\src\Api\obj\Debug\net8.0\DiscordClone.Api.sourcelink.json
