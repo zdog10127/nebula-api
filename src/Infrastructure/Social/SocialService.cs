@@ -151,14 +151,17 @@ public class SocialService : ISocialService
         var friends = await _mongo.Users.Find(u => friendIds.Contains(u.Id)).ToListAsync(ct);
         var friendsById = friends.ToDictionary(u => u.Id);
         var statuses = await _presence.GetEffectiveStatusesAsync(friendIds, ct);
+        var activities = await _presence.GetActivitiesAsync(friendIds, ct);
 
         return friendships
             .Select(f =>
             {
                 var friendId = f.UserAId == userId ? f.UserBId : f.UserAId;
-                return friendsById.TryGetValue(friendId, out var friend)
-                    ? new FriendDto(friend.Id, friend.Username, friend.DisplayName, friend.AvatarUrl, statuses.GetValueOrDefault(friend.Id), f.CreatedAt)
-                    : null;
+                if (!friendsById.TryGetValue(friendId, out var friend))
+                    return null;
+
+                var activity = friend.ShareActivityStatus ? activities.GetValueOrDefault(friend.Id) : null;
+                return new FriendDto(friend.Id, friend.Username, friend.DisplayName, friend.AvatarUrl, statuses.GetValueOrDefault(friend.Id), f.CreatedAt, activity);
             })
             .Where(f => f is not null)
             .Select(f => f!)
@@ -192,7 +195,8 @@ public class SocialService : ISocialService
 
         var other = await _mongo.Users.Find(u => u.Id == otherUserId).SingleAsync(ct);
         var status = await _presence.GetEffectiveStatusAsync(otherUserId, ct);
-        return new DmChannelDto(channel.Id, other.Id, other.Username, other.DisplayName, other.AvatarUrl, status, null, channel.LastMessageAt);
+        var activity = other.ShareActivityStatus ? await _presence.GetActivityAsync(otherUserId, ct) : null;
+        return new DmChannelDto(channel.Id, other.Id, other.Username, other.DisplayName, other.AvatarUrl, status, null, channel.LastMessageAt, activity);
     }
 
     public async Task<IReadOnlyList<DmChannelDto>> GetDmChannelsAsync(Guid userId, CancellationToken ct)
@@ -205,6 +209,7 @@ public class SocialService : ISocialService
         var others = await _mongo.Users.Find(u => otherIds.Contains(u.Id)).ToListAsync(ct);
         var othersById = others.ToDictionary(u => u.Id);
         var statuses = await _presence.GetEffectiveStatusesAsync(otherIds, ct);
+        var activities = await _presence.GetActivitiesAsync(otherIds, ct);
 
         var channelIds = channels.Select(c => c.Id).ToList();
         var lastMessages = await _mongo.DmMessages
@@ -219,9 +224,10 @@ public class SocialService : ISocialService
             {
                 var other = othersById[c.UserAId == userId ? c.UserBId : c.UserAId];
                 var last = lastMessageByChannel.GetValueOrDefault(c.Id);
+                var activity = other.ShareActivityStatus ? activities.GetValueOrDefault(other.Id) : null;
                 return new DmChannelDto(
                     c.Id, other.Id, other.Username, other.DisplayName, other.AvatarUrl,
-                    statuses.GetValueOrDefault(other.Id), last?.Content, c.LastMessageAt);
+                    statuses.GetValueOrDefault(other.Id), last?.Content, c.LastMessageAt, activity);
             })
             .OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue)
             .ToList();

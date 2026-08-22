@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using DiscordClone.Api.BackgroundServices;
 using DiscordClone.Api.Hubs;
 using DiscordClone.Api.Middleware;
 using DiscordClone.Application.Storage;
@@ -24,6 +25,11 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// Steam activity polling: a no-op background loop when STEAM_API_KEY/PUBLIC_API_URL
+// aren't configured (see SteamOptions/SteamActivityPollingService) — safe to always
+// register.
+builder.Services.AddHostedService<SteamActivityPollingService>();
 
 var redisConnectionString = builder.Configuration["REDIS_CONNECTION_STRING"]
     ?? throw new InvalidOperationException("REDIS_CONNECTION_STRING is not configured.");

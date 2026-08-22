@@ -36,4 +36,5 @@ public class MongoContext
     public IMongoCollection<PushSubscription> PushSubscriptions => Database.GetCollection<PushSubscription>("push_subscriptions");
     public IMongoCollection<CustomEmoji> CustomEmojis => Database.GetCollection<CustomEmoji>("custom_emojis");
     public IMongoCollection<PendingTwoFactorLogin> PendingTwoFactorLogins => Database.GetCollection<PendingTwoFactorLogin>("pending_two_factor_logins");
+    public IMongoCollection<PendingSteamLink> PendingSteamLinks => Database.GetCollection<PendingSteamLink>("pending_steam_links");
 }

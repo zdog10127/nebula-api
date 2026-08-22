@@ -49,7 +49,8 @@ public record MemberDto(
     DateTime JoinedAt,
     PresenceStatus Status,
     string? CustomStatusText,
-    string? CustomStatusEmoji);
+    string? CustomStatusEmoji,
+    string? CurrentActivity);
 
 public record MyPermissionsDto(bool IsOwner, IReadOnlyList<ServerPermission> Permissions);
 

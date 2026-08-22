@@ -165,6 +165,7 @@ aws elasticbeanstalk update-environment \
     Namespace=aws:elasticbeanstalk:application:environment,OptionName=JWT_ISSUER,Value=nebula-prod \
     Namespace=aws:elasticbeanstalk:application:environment,OptionName=JWT_EXPIRATION_MINUTES,Value=15 \
     Namespace=aws:elasticbeanstalk:application:environment,OptionName=JWT_REFRESH_EXPIRATION_DAYS,Value=30 \
+    Namespace=aws:elasticbeanstalk:application:environment,OptionName=TOTP_ENCRYPTION_KEY,Value="<gere com: openssl rand -base64 32>" \
     Namespace=aws:elasticbeanstalk:application:environment,OptionName=CORS_ORIGINS,Value="http://localhost:5173,http://127.0.0.1:47823,https://<dominio-cloudfront-1>" \
     Namespace=aws:elasticbeanstalk:application:environment,OptionName=LIVEKIT_API_KEY,Value=devkey \
     Namespace=aws:elasticbeanstalk:application:environment,OptionName=LIVEKIT_API_SECRET,Value="<mesmo valor usado no .env da EC2 nebula-media>" \
@@ -175,11 +176,27 @@ aws elasticbeanstalk update-environment \
     Namespace=aws:elasticbeanstalk:application:environment,OptionName=S3_SECRET_KEY,Value="<secret key do usuario nebula-app>" \
     Namespace=aws:elasticbeanstalk:application:environment,OptionName=S3_BUCKET,Value=nebula-attachments-zdog10127 \
     Namespace=aws:elasticbeanstalk:application:environment,OptionName=TENOR_API_KEY,Value="" \
+    Namespace=aws:elasticbeanstalk:application:environment,OptionName=STEAM_API_KEY,Value="<sua Steam Web API key, gerada em https://steamcommunity.com/dev/apikey>" \
+    Namespace=aws:elasticbeanstalk:application:environment,OptionName=PUBLIC_API_URL,Value="https://<dominio-cloudfront-2>" \
   --region sa-east-1
 ```
 
-Os valores entre `<>` que dependem de recursos criados mais adiante (CloudFront #1/#3, EC2) — dá pra rodar
-esse comando de novo depois só com o `OptionName` que mudou, não precisa repetir tudo.
+Os valores entre `<>` que dependem de recursos criados mais adiante (CloudFront #1/#2/#3, EC2) — dá pra
+rodar esse comando de novo depois só com o `OptionName` que mudou, não precisa repetir tudo.
+
+`TOTP_ENCRYPTION_KEY` precisa decodificar pra exatamente 32 bytes (AES-256) — o comando `openssl rand
+-base64 32` acima já gera isso no formato certo. **Gere um valor novo só pra produção, nunca reaproveite
+o mesmo usado no seu `dotnet user-secrets` local** — se algum dia essa chave de produção precisar trocar,
+todo 2FA já configurado pelos usuários para de validar (o segredo TOTP de cada um é criptografado com
+essa chave), então trate como um secret tão sensível quanto o `JWT_SECRET`.
+
+`STEAM_API_KEY` e `PUBLIC_API_URL` são os dois únicos opcionais desse bloco todo — sem eles a aplicação
+sobe normalmente, só com a vinculação de conta Steam desativada (o endpoint retorna um erro 503 em vez de
+travar o startup, igual o `TENOR_API_KEY` faz com a busca de GIFs). `PUBLIC_API_URL` precisa ser
+exatamente a URL pública do próprio backend (o `<dominio-cloudfront-2>` acima, sem barra no final) — é
+usada pra montar o `openid.realm`/`openid.return_to` do login da Steam, então só dá pra preencher
+de verdade depois do passo 4 criar o CloudFront #2 (por isso ela também é um valor `<>` a atualizar depois,
+igual o `LIVEKIT_URL`).
 
 O host do ambiente (pro passo 4) você vê na aba do ambiente no console, ou:
 

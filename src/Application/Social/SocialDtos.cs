@@ -2,7 +2,7 @@ using DiscordClone.Domain.Enums;
 
 namespace DiscordClone.Application.Social;
 
-public record FriendDto(Guid UserId, string Username, string DisplayName, string? AvatarUrl, PresenceStatus Status, DateTime FriendsSince);
+public record FriendDto(Guid UserId, string Username, string DisplayName, string? AvatarUrl, PresenceStatus Status, DateTime FriendsSince, string? CurrentActivity);
 
 public record FriendRequestDto(Guid Id, Guid UserId, string Username, string DisplayName, string? AvatarUrl, DateTime CreatedAt, bool IsIncoming);
 
@@ -14,7 +14,8 @@ public record DmChannelDto(
     string? OtherAvatarUrl,
     PresenceStatus OtherStatus,
     string? LastMessageContent,
-    DateTime? LastMessageAt);
+    DateTime? LastMessageAt,
+    string? OtherCurrentActivity);
 
 public record DmMessageDto(Guid Id, Guid DmChannelId, Guid AuthorId, string Content, DateTime CreatedAt, DateTime? EditedAt);
 

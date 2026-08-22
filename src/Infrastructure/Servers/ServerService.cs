@@ -575,6 +575,7 @@ public partial class ServerService : IServerService
         var usersById = users.ToDictionary(u => u.Id);
 
         var statuses = await _presenceService.GetEffectiveStatusesAsync(members.Select(m => m.UserId), ct);
+        var activities = await _presenceService.GetActivitiesAsync(members.Select(m => m.UserId), ct);
 
         return members
             .Where(m => usersById.ContainsKey(m.UserId))
@@ -582,9 +583,10 @@ public partial class ServerService : IServerService
             {
                 var user = usersById[m.UserId];
                 var status = statuses.GetValueOrDefault(m.UserId, PresenceStatus.Offline);
+                var activity = user.ShareActivityStatus ? activities.GetValueOrDefault(m.UserId) : null;
                 return new MemberDto(
                     m.UserId, user.Username, user.DisplayName, m.Nickname, user.AvatarUrl, m.RoleIds,
-                    server.OwnerId == m.UserId, m.JoinedAt, status, user.CustomStatusText, user.CustomStatusEmoji);
+                    server.OwnerId == m.UserId, m.JoinedAt, status, user.CustomStatusText, user.CustomStatusEmoji, activity);
             })
             .ToList();
     }

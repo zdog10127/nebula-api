@@ -11,6 +11,11 @@ public static class MongoIndexInitializer
             [
                 new CreateIndexModel<User>(Builders<User>.IndexKeys.Ascending(u => u.Username), new CreateIndexOptions { Unique = true }),
                 new CreateIndexModel<User>(Builders<User>.IndexKeys.Ascending(u => u.Email), new CreateIndexOptions { Unique = true }),
+                // Sparse: most users never link Steam, so SteamId64 is null/absent on
+                // most documents — a sparse index excludes those from the uniqueness
+                // check entirely, so it's only "one Nébula account per Steam account"
+                // among the ones that actually linked one.
+                new CreateIndexModel<User>(Builders<User>.IndexKeys.Ascending(u => u.SteamId64), new CreateIndexOptions { Unique = true, Sparse = true }),
             ], ct);
 
         await context.RefreshTokens.Indexes.CreateManyAsync(
@@ -114,6 +119,14 @@ public static class MongoIndexInitializer
         await context.PendingTwoFactorLogins.Indexes.CreateOneAsync(
             new CreateIndexModel<PendingTwoFactorLogin>(
                 Builders<PendingTwoFactorLogin>.IndexKeys.Ascending(p => p.ExpiresAt),
+                new CreateIndexOptions { ExpireAfter = TimeSpan.Zero }),
+            cancellationToken: ct);
+
+        // Same TTL pattern as PendingTwoFactorLogins above — an abandoned Steam link
+        // attempt (user closes the tab before finishing Steam's login) cleans itself up.
+        await context.PendingSteamLinks.Indexes.CreateOneAsync(
+            new CreateIndexModel<PendingSteamLink>(
+                Builders<PendingSteamLink>.IndexKeys.Ascending(p => p.ExpiresAt),
                 new CreateIndexOptions { ExpireAfter = TimeSpan.Zero }),
             cancellationToken: ct);
     }

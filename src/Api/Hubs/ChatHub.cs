@@ -66,7 +66,12 @@ public class ChatHub : Hub
         {
             var serverIds = await _serverService.GetMyServerIdsAsync(userId, CancellationToken.None);
             foreach (var serverId in serverIds)
+            {
                 await Clients.Group(PresenceGroup(serverId)).SendAsync("PresenceChanged", userId, PresenceStatus.Offline);
+                // PresenceService.DisconnectAsync already cleared the activity key (see
+                // there) — tell everyone who could see "Jogando X" that it's gone too.
+                await Clients.Group(PresenceGroup(serverId)).SendAsync("ActivityChanged", userId, null);
+            }
         }
 
         await LeaveVoiceInternalAsync(CancellationToken.None);
@@ -86,6 +91,23 @@ public class ChatHub : Hub
         var serverIds = await _serverService.GetMyServerIdsAsync(userId, Context.ConnectionAborted);
         foreach (var serverId in serverIds)
             await Clients.Group(PresenceGroup(serverId)).SendAsync("PresenceChanged", userId, effectiveStatus);
+    }
+
+    // Pushed by the Electron app whenever its local process scan (see gameActivity.cjs)
+    // notices a known/likely game start or stop running. Mirrors SetStatus exactly —
+    // same Redis-backed presence layer, same broadcast scope (shared servers only).
+    public async Task SetActivity(string? activityName)
+    {
+        var trimmed = activityName?.Trim();
+        if (trimmed is { Length: > 128 })
+            throw new HubException("Activity name is too long.");
+
+        var userId = Context.User!.GetUserId();
+        await _presenceService.SetActivityAsync(userId, trimmed, Context.ConnectionAborted);
+
+        var serverIds = await _serverService.GetMyServerIdsAsync(userId, Context.ConnectionAborted);
+        foreach (var serverId in serverIds)
+            await Clients.Group(PresenceGroup(serverId)).SendAsync("ActivityChanged", userId, trimmed);
     }
 
     public async Task JoinChannel(Guid channelId)

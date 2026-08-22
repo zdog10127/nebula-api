@@ -13,4 +13,10 @@ public interface IAuthService
     Task<TwoFactorSetupResult> SetupTwoFactorAsync(Guid userId, CancellationToken ct);
     Task<EnableTwoFactorResult> EnableTwoFactorAsync(Guid userId, EnableTwoFactorRequest request, CancellationToken ct);
     Task DisableTwoFactorAsync(Guid userId, DisableTwoFactorRequest request, CancellationToken ct);
+
+    Task<SteamLinkStartResult> StartSteamLinkAsync(Guid userId, CancellationToken ct);
+    Task<SteamLinkCallbackResult> CompleteSteamLinkAsync(IReadOnlyDictionary<string, string> callbackQuery, CancellationToken ct);
+
+    /// <summary>Returns the user's effective activity right after unlinking (Steam cleared, may still fall back to a locally-detected one) so the caller can broadcast it.</summary>
+    Task<string?> UnlinkSteamAsync(Guid userId, CancellationToken ct);
 }

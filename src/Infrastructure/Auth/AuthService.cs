@@ -1,8 +1,11 @@
 using System.Text.RegularExpressions;
 using DiscordClone.Application.Auth;
 using DiscordClone.Application.Common;
+using DiscordClone.Application.Presence;
+using DiscordClone.Application.Steam;
 using DiscordClone.Domain.Entities;
 using DiscordClone.Infrastructure.Persistence;
+using DiscordClone.Infrastructure.Steam;
 using MongoDB.Driver;
 
 namespace DiscordClone.Infrastructure.Auth;
@@ -34,17 +37,35 @@ public partial class AuthService : IAuthService
     // is what actually reclaims the document once it passes.
     private const int PendingTwoFactorLoginMinutes = 5;
 
+    // How long a "redirected to Steam, waiting for them to come back" link attempt
+    // stays valid. Mirrors PendingTwoFactorLoginMinutes above; the Mongo TTL index on
+    // PendingSteamLink.ExpiresAt (see MongoIndexInitializer) reclaims it either way.
+    private const int PendingSteamLinkMinutes = 10;
+
     private readonly MongoContext _mongo;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ITokenService _tokenService;
     private readonly TotpSecretProtector _totpProtector;
+    private readonly IPresenceService _presenceService;
+    private readonly ISteamOpenIdService _steamOpenId;
+    private readonly SteamOptions _steamOptions;
 
-    public AuthService(MongoContext mongo, IPasswordHasher passwordHasher, ITokenService tokenService, TotpSecretProtector totpProtector)
+    public AuthService(
+        MongoContext mongo,
+        IPasswordHasher passwordHasher,
+        ITokenService tokenService,
+        TotpSecretProtector totpProtector,
+        IPresenceService presenceService,
+        ISteamOpenIdService steamOpenId,
+        SteamOptions steamOptions)
     {
+        _presenceService = presenceService;
         _mongo = mongo;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
         _totpProtector = totpProtector;
+        _steamOpenId = steamOpenId;
+        _steamOptions = steamOptions;
     }
 
     public async Task<AuthResult> RegisterAsync(RegisterRequest request, CancellationToken ct)
@@ -324,6 +345,9 @@ public partial class AuthService : IAuthService
             updates.Add(Builders<User>.Update.Set(u => u.CustomStatusEmoji, trimmed.Length == 0 ? null : trimmed));
         }
 
+        if (request.ShareActivityStatus is not null)
+            updates.Add(Builders<User>.Update.Set(u => u.ShareActivityStatus, request.ShareActivityStatus.Value));
+
         if (updates.Count == 0)
             throw new AppException("Nothing to update.");
 
@@ -333,6 +357,17 @@ public partial class AuthService : IAuthService
             new FindOneAndUpdateOptions<User> { ReturnDocument = ReturnDocument.After },
             ct) ?? throw new AppException("User not found.", 404);
 
+        if (request.ShareActivityStatus == false)
+        {
+            // Wipe whatever was already broadcast, immediately — otherwise "Jogando X"
+            // would keep showing to others until the user's connection happened to drop.
+            // Both sources: a locally-detected activity and a Steam-polled one (see
+            // PresenceService.GetActivitiesAsync, which checks Steam first) — leaving
+            // either one behind would let it leak back into view.
+            await _presenceService.SetActivityAsync(userId, null, ct);
+            await _presenceService.SetSteamActivityAsync(userId, null, ct);
+        }
+
         return ToProfile(user);
     }
 
@@ -340,6 +375,8 @@ public partial class AuthService : IAuthService
     {
         var user = await _mongo.Users.Find(u => u.Id == userId).SingleOrDefaultAsync(ct)
             ?? throw new AppException("User not found.", 404);
+
+        var activity = user.ShareActivityStatus ? await _presenceService.GetActivityAsync(userId, ct) : null;
 
         return new PublicProfileDto(
             user.Id,
@@ -352,7 +389,8 @@ public partial class AuthService : IAuthService
             user.Pronouns,
             user.CustomStatusText,
             user.CustomStatusEmoji,
-            user.CreatedAt);
+            user.CreatedAt,
+            activity);
     }
 
     private static UserProfile ToProfile(User user) => new(
@@ -367,7 +405,81 @@ public partial class AuthService : IAuthService
         user.Pronouns,
         user.CustomStatusText,
         user.CustomStatusEmoji,
-        user.TotpEnabled);
+        user.TotpEnabled,
+        user.ShareActivityStatus,
+        user.SteamId64 is not null);
+
+    public async Task<SteamLinkStartResult> StartSteamLinkAsync(Guid userId, CancellationToken ct)
+    {
+        if (!_steamOptions.IsConfigured)
+            throw new AppException("A integração com a Steam não está configurada neste servidor.", 503);
+
+        var pending = new PendingSteamLink
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            CreatedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(PendingSteamLinkMinutes),
+        };
+        await _mongo.PendingSteamLinks.InsertOneAsync(pending, cancellationToken: ct);
+
+        // linkId rides through Steam's redirect untouched alongside its own openid.*
+        // params (Steam only appends to return_to, never strips existing query
+        // params), which is what lets CompleteSteamLinkAsync find this pending link
+        // back on an otherwise-anonymous callback request.
+        var returnTo = $"{_steamOptions.PublicApiUrl}/api/auth/steam/callback?linkId={pending.Id}";
+        var redirectUrl = _steamOpenId.BuildLoginRedirectUrl(returnTo, _steamOptions.PublicApiUrl);
+        return new SteamLinkStartResult(redirectUrl);
+    }
+
+    public async Task<SteamLinkCallbackResult> CompleteSteamLinkAsync(IReadOnlyDictionary<string, string> callbackQuery, CancellationToken ct)
+    {
+        const string GenericFailureMessage = "Não foi possível vincular sua conta Steam. Feche esta aba e tente novamente.";
+
+        if (!callbackQuery.TryGetValue("linkId", out var linkIdRaw) || !Guid.TryParse(linkIdRaw, out var linkId))
+            return new SteamLinkCallbackResult(false, GenericFailureMessage);
+
+        var pending = await _mongo.PendingSteamLinks.Find(p => p.Id == linkId).SingleOrDefaultAsync(ct);
+        if (pending is null || pending.ExpiresAt < DateTime.UtcNow)
+            return new SteamLinkCallbackResult(false, "Esse link expirou. Feche esta aba e tente vincular sua conta Steam de novo.");
+
+        var steamId64 = await _steamOpenId.VerifyAndExtractSteamId64Async(callbackQuery, ct);
+        if (steamId64 is null)
+            return new SteamLinkCallbackResult(false, GenericFailureMessage);
+
+        var update = Builders<User>.Update.Set(u => u.SteamId64, steamId64);
+        try
+        {
+            await _mongo.Users.UpdateOneAsync(u => u.Id == pending.UserId, update, cancellationToken: ct);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // The unique+sparse index on User.SteamId64 (see MongoIndexInitializer)
+            // caught this — that Steam account is already linked to a different
+            // Nébula account.
+            return new SteamLinkCallbackResult(false, "Essa conta Steam já está vinculada a outro usuário do Nébula.");
+        }
+
+        await _mongo.PendingSteamLinks.DeleteOneAsync(p => p.Id == linkId, ct);
+
+        // No immediate hub broadcast here — SteamActivityPollingService picks the new
+        // link up on its next tick (within ~60s), same as any other Steam activity
+        // change. This endpoint has no authenticated connection to broadcast through
+        // anyway: it's a plain, unauthenticated redirect from Steam's servers.
+        return new SteamLinkCallbackResult(true, "Conta Steam vinculada! Pode fechar esta aba e voltar pro Nébula.");
+    }
+
+    public async Task<string?> UnlinkSteamAsync(Guid userId, CancellationToken ct)
+    {
+        var update = Builders<User>.Update.Set(u => u.SteamId64, null);
+        await _mongo.Users.UpdateOneAsync(u => u.Id == userId, update, cancellationToken: ct);
+        await _presenceService.SetSteamActivityAsync(userId, null, ct);
+
+        // A locally-detected (Electron) activity may still be running even after
+        // unlinking Steam — recompute rather than assuming null, so the caller
+        // broadcasts the right thing instead of wiping a still-valid activity.
+        return await _presenceService.GetActivityAsync(userId, ct);
+    }
 
     private async Task<AuthResult> IssueTokensAsync(User user, CancellationToken ct)
     {

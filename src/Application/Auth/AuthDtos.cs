@@ -27,7 +27,9 @@ public record UserProfile(
     string? Pronouns,
     string? CustomStatusText,
     string? CustomStatusEmoji,
-    bool TotpEnabled);
+    bool TotpEnabled,
+    bool ShareActivityStatus,
+    bool SteamLinked);
 
 public record PublicProfileDto(
     Guid UserId,
@@ -40,7 +42,8 @@ public record PublicProfileDto(
     string? Pronouns,
     string? CustomStatusText,
     string? CustomStatusEmoji,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? CurrentActivity);
 
 public record UpdateProfileRequest(
     string? DisplayName,
@@ -48,7 +51,8 @@ public record UpdateProfileRequest(
     string? Pronouns,
     string? BannerColor,
     string? CustomStatusText,
-    string? CustomStatusEmoji);
+    string? CustomStatusEmoji,
+    bool? ShareActivityStatus);
 
 // Two-factor authentication (opt-in TOTP).
 
@@ -70,3 +74,11 @@ public record EnableTwoFactorRequest(string Code);
 public record EnableTwoFactorResult(IReadOnlyList<string> RecoveryCodes);
 
 public record DisableTwoFactorRequest(string Password);
+
+// Steam account link (opt-in, independent of ShareActivityStatus — see User.SteamId64).
+
+/// <summary>Returned by StartSteamLinkAsync — the client should open RedirectUrl (system browser / new tab) to let the user log into Steam.</summary>
+public record SteamLinkStartResult(string RedirectUrl);
+
+/// <summary>Returned by CompleteSteamLinkAsync so AuthController can render a plain HTML confirmation/error page for the browser Steam redirected back to.</summary>
+public record SteamLinkCallbackResult(bool Success, string Message);
