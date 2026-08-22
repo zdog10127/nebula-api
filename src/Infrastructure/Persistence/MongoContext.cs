@@ -35,4 +35,5 @@ public class MongoContext
     public IMongoCollection<ChannelReadState> ChannelReadStates => Database.GetCollection<ChannelReadState>("channel_read_states");
     public IMongoCollection<PushSubscription> PushSubscriptions => Database.GetCollection<PushSubscription>("push_subscriptions");
     public IMongoCollection<CustomEmoji> CustomEmojis => Database.GetCollection<CustomEmoji>("custom_emojis");
+    public IMongoCollection<PendingTwoFactorLogin> PendingTwoFactorLogins => Database.GetCollection<PendingTwoFactorLogin>("pending_two_factor_logins");
 }

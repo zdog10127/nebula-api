@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using DiscordClone.Application.Auth;
 using DiscordClone.Application.Common;
 using DiscordClone.Domain.Entities;
@@ -6,17 +7,44 @@ using MongoDB.Driver;
 
 namespace DiscordClone.Infrastructure.Auth;
 
-public class AuthService : IAuthService
+public partial class AuthService : IAuthService
 {
+    // Deliberately permissive — the only goal is to catch obviously malformed input
+    // client-side validation didn't; the real proof an email address works is the
+    // person receiving mail there, which no regex can verify anyway.
+    [GeneratedRegex(@"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
+    private static partial Regex EmailPattern();
+
+    // Mirrors the kind of handle Discord itself allows — letters, digits, underscore,
+    // period, hyphen — so a username can't smuggle in whitespace, emoji, or Unicode
+    // bidi/override control characters that could be used to spoof another user's name.
+    [GeneratedRegex(@"^[a-zA-Z0-9_.-]{3,32}$")]
+    private static partial Regex UsernamePattern();
+
+    // bcrypt (see PasswordHasher) silently truncates at 72 bytes — anything past that
+    // is ignored when hashing, so two different passwords sharing the same first 72
+    // characters would verify as equal. Rejecting long input up front avoids that trap
+    // entirely rather than relying on people never noticing.
+    private const int MaxPasswordLength = 72;
+    private const int MaxDisplayNameLength = 64;
+
+    // How long a "password verified, waiting for the 2FA code" challenge stays valid.
+    // Short enough that a stolen/leaked login token is useless a few minutes later;
+    // the Mongo TTL index on PendingTwoFactorLogin.ExpiresAt (see MongoIndexInitializer)
+    // is what actually reclaims the document once it passes.
+    private const int PendingTwoFactorLoginMinutes = 5;
+
     private readonly MongoContext _mongo;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ITokenService _tokenService;
+    private readonly TotpSecretProtector _totpProtector;
 
-    public AuthService(MongoContext mongo, IPasswordHasher passwordHasher, ITokenService tokenService)
+    public AuthService(MongoContext mongo, IPasswordHasher passwordHasher, ITokenService tokenService, TotpSecretProtector totpProtector)
     {
         _mongo = mongo;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
+        _totpProtector = totpProtector;
     }
 
     public async Task<AuthResult> RegisterAsync(RegisterRequest request, CancellationToken ct)
@@ -24,11 +52,21 @@ public class AuthService : IAuthService
         var username = request.Username.Trim();
         var email = request.Email.Trim().ToLowerInvariant();
 
-        if (string.IsNullOrWhiteSpace(username) || username.Length < 3)
-            throw new AppException("Username must have at least 3 characters.");
+        if (!UsernamePattern().IsMatch(username))
+            throw new AppException("Username must be 3-32 characters and contain only letters, numbers, '.', '_' or '-'.");
+
+        if (email.Length > 254 || !EmailPattern().IsMatch(email))
+            throw new AppException("Enter a valid email address.");
 
         if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
             throw new AppException("Password must have at least 8 characters.");
+
+        if (request.Password.Length > MaxPasswordLength)
+            throw new AppException($"Password must be at most {MaxPasswordLength} characters.");
+
+        var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? username : request.DisplayName.Trim();
+        if (displayName.Length is < 1 or > MaxDisplayNameLength)
+            throw new AppException($"Display name must have between 1 and {MaxDisplayNameLength} characters.");
 
         var exists = await _mongo.Users.Find(u => u.Username == username || u.Email == email).AnyAsync(ct);
         if (exists)
@@ -40,16 +78,28 @@ public class AuthService : IAuthService
             Username = username,
             Email = email,
             PasswordHash = _passwordHasher.Hash(request.Password),
-            DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? username : request.DisplayName.Trim(),
+            DisplayName = displayName,
             CreatedAt = DateTime.UtcNow,
         };
 
-        await _mongo.Users.InsertOneAsync(user, cancellationToken: ct);
+        try
+        {
+            await _mongo.Users.InsertOneAsync(user, cancellationToken: ct);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // Belt-and-suspenders for the race between the AnyAsync check above and this
+            // insert: two concurrent registrations for the same username/email can both
+            // pass the check, but the unique index (see MongoIndexInitializer) rejects the
+            // second insert. Without this catch that surfaces as a raw 500, not the same
+            // clean 409 a non-concurrent duplicate gets above.
+            throw new AppException("Username or email already in use.", 409);
+        }
 
         return await IssueTokensAsync(user, ct);
     }
 
-    public async Task<AuthResult> LoginAsync(LoginRequest request, CancellationToken ct)
+    public async Task<LoginOutcome> LoginAsync(LoginRequest request, CancellationToken ct)
     {
         var email = request.Email.Trim().ToLowerInvariant();
         var user = await _mongo.Users.Find(u => u.Email == email).SingleOrDefaultAsync(ct);
@@ -57,7 +107,129 @@ public class AuthService : IAuthService
         if (user is null || !_passwordHasher.Verify(request.Password, user.PasswordHash))
             throw new AppException("Invalid email or password.", 401);
 
+        if (user.TotpEnabled)
+        {
+            // Password is correct, but this account opted into 2FA: hold off on issuing
+            // real tokens until VerifyTwoFactorAsync confirms the second factor too.
+            var pending = new PendingTwoFactorLogin
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(PendingTwoFactorLoginMinutes),
+            };
+            await _mongo.PendingTwoFactorLogins.InsertOneAsync(pending, cancellationToken: ct);
+
+            return new LoginOutcome(true, pending.Id.ToString(), null);
+        }
+
+        var result = await IssueTokensAsync(user, ct);
+        return new LoginOutcome(false, null, result);
+    }
+
+    public async Task<AuthResult> VerifyTwoFactorAsync(VerifyTwoFactorRequest request, CancellationToken ct)
+    {
+        if (!Guid.TryParse(request.LoginToken, out var pendingId))
+            throw new AppException("Invalid or expired login challenge.", 401);
+
+        var pending = await _mongo.PendingTwoFactorLogins.Find(p => p.Id == pendingId).SingleOrDefaultAsync(ct);
+        if (pending is null || pending.ExpiresAt < DateTime.UtcNow)
+            throw new AppException("Invalid or expired login challenge.", 401);
+
+        var user = await _mongo.Users.Find(u => u.Id == pending.UserId).SingleOrDefaultAsync(ct)
+            ?? throw new AppException("User not found.", 404);
+
+        var code = request.Code?.Trim() ?? string.Empty;
+        var accepted = user.TotpEnabled
+            && !string.IsNullOrEmpty(user.TotpSecret)
+            && TotpService.Validate(_totpProtector.Decrypt(user.TotpSecret), code);
+
+        if (!accepted)
+            accepted = await TryConsumeRecoveryCodeAsync(user, code, ct);
+
+        if (!accepted)
+            throw new AppException("Invalid verification code.", 401);
+
+        // Spend this challenge whether it succeeded via TOTP or a recovery code, so a
+        // leaked/replayed login token can't be reused for a second login.
+        await _mongo.PendingTwoFactorLogins.DeleteOneAsync(p => p.Id == pendingId, ct);
+
         return await IssueTokensAsync(user, ct);
+    }
+
+    private async Task<bool> TryConsumeRecoveryCodeAsync(User user, string code, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(code) || user.TotpRecoveryCodeHashes.Count == 0)
+            return false;
+
+        var normalized = code.Trim().ToUpperInvariant();
+        var matchedHash = user.TotpRecoveryCodeHashes.FirstOrDefault(h => _passwordHasher.Verify(normalized, h));
+        if (matchedHash is null)
+            return false;
+
+        var update = Builders<User>.Update.Pull(u => u.TotpRecoveryCodeHashes, matchedHash);
+        await _mongo.Users.UpdateOneAsync(u => u.Id == user.Id, update, cancellationToken: ct);
+        return true;
+    }
+
+    public async Task<TwoFactorSetupResult> SetupTwoFactorAsync(Guid userId, CancellationToken ct)
+    {
+        var user = await _mongo.Users.Find(u => u.Id == userId).SingleOrDefaultAsync(ct)
+            ?? throw new AppException("User not found.", 404);
+
+        if (user.TotpEnabled)
+            throw new AppException("Two-factor authentication is already enabled.");
+
+        // Generating a fresh secret here (even if setup was already called once before
+        // without being confirmed via EnableTwoFactorAsync) is safe: TotpEnabled only
+        // flips to true once the user proves possession of the new secret.
+        var secret = TotpService.GenerateSecret();
+        var update = Builders<User>.Update.Set(u => u.TotpSecret, _totpProtector.Encrypt(secret));
+        await _mongo.Users.UpdateOneAsync(u => u.Id == userId, update, cancellationToken: ct);
+
+        var otpAuthUri = TotpService.BuildOtpAuthUri(secret, user.Email, "Nebula");
+        return new TwoFactorSetupResult(secret, otpAuthUri);
+    }
+
+    public async Task<EnableTwoFactorResult> EnableTwoFactorAsync(Guid userId, EnableTwoFactorRequest request, CancellationToken ct)
+    {
+        var user = await _mongo.Users.Find(u => u.Id == userId).SingleOrDefaultAsync(ct)
+            ?? throw new AppException("User not found.", 404);
+
+        if (user.TotpEnabled)
+            throw new AppException("Two-factor authentication is already enabled.");
+
+        if (string.IsNullOrEmpty(user.TotpSecret))
+            throw new AppException("Call setup before enabling two-factor authentication.");
+
+        var secret = _totpProtector.Decrypt(user.TotpSecret);
+        if (!TotpService.Validate(secret, request.Code))
+            throw new AppException("Invalid verification code.");
+
+        var recoveryCodes = RecoveryCodeGenerator.Generate();
+        var recoveryHashes = recoveryCodes.Select(c => _passwordHasher.Hash(c)).ToList();
+
+        var update = Builders<User>.Update
+            .Set(u => u.TotpEnabled, true)
+            .Set(u => u.TotpRecoveryCodeHashes, recoveryHashes);
+        await _mongo.Users.UpdateOneAsync(u => u.Id == userId, update, cancellationToken: ct);
+
+        return new EnableTwoFactorResult(recoveryCodes);
+    }
+
+    public async Task DisableTwoFactorAsync(Guid userId, DisableTwoFactorRequest request, CancellationToken ct)
+    {
+        var user = await _mongo.Users.Find(u => u.Id == userId).SingleOrDefaultAsync(ct)
+            ?? throw new AppException("User not found.", 404);
+
+        if (!_passwordHasher.Verify(request.Password, user.PasswordHash))
+            throw new AppException("Incorrect password.", 401);
+
+        var update = Builders<User>.Update
+            .Set(u => u.TotpEnabled, false)
+            .Set(u => u.TotpSecret, null)
+            .Set(u => u.TotpRecoveryCodeHashes, new List<string>());
+        await _mongo.Users.UpdateOneAsync(u => u.Id == userId, update, cancellationToken: ct);
     }
 
     public async Task<AuthResult> RefreshAsync(string refreshToken, CancellationToken ct)
@@ -194,7 +366,8 @@ public class AuthService : IAuthService
         user.Bio,
         user.Pronouns,
         user.CustomStatusText,
-        user.CustomStatusEmoji);
+        user.CustomStatusEmoji,
+        user.TotpEnabled);
 
     private async Task<AuthResult> IssueTokensAsync(User user, CancellationToken ct)
     {

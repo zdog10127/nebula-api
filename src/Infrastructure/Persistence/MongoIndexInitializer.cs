@@ -107,5 +107,14 @@ public static class MongoIndexInitializer
                 Builders<CustomEmoji>.IndexKeys.Ascending(e => e.ServerId).Ascending(e => e.Name),
                 new CreateIndexOptions { Unique = true }),
             cancellationToken: ct);
+
+        // TTL index: Mongo automatically deletes a pending 2FA login once ExpiresAt is in
+        // the past, so an abandoned "password verified, waiting for code" attempt never
+        // accumulates in the database.
+        await context.PendingTwoFactorLogins.Indexes.CreateOneAsync(
+            new CreateIndexModel<PendingTwoFactorLogin>(
+                Builders<PendingTwoFactorLogin>.IndexKeys.Ascending(p => p.ExpiresAt),
+                new CreateIndexOptions { ExpireAfter = TimeSpan.Zero }),
+            cancellationToken: ct);
     }
 }

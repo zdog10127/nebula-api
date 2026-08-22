@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using DiscordClone.Api.Hubs;
 using DiscordClone.Api.Middleware;
 using DiscordClone.Application.Storage;
@@ -7,6 +8,7 @@ using DiscordClone.Infrastructure;
 using DiscordClone.Infrastructure.Auth;
 using DiscordClone.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 
@@ -63,6 +65,40 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
+// "auth": a tight per-IP limit on register/login/refresh — the only endpoints where
+// someone could otherwise script thousands of password guesses or account-creation
+// attempts per minute. "global": a much looser per-IP ceiling on everything else, as a
+// basic backstop against a single client hammering the API, not a serious anti-abuse
+// system. Both partition by remote IP so one heavy client can't exhaust the limiter's
+// bookkeeping for a shared bucket, and both fail closed with 429 rather than queuing.
+builder.Services.AddRateLimiter(options =>
+{
+    options.OnRejected = (context, ct) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        return new ValueTask();
+    };
+
+    options.AddPolicy("auth", httpContext => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+        }));
+
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 300,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+});
+
 var corsOriginsConfig = builder.Configuration["CORS_ORIGINS"];
 // http://127.0.0.1:47823 is the fixed origin the packaged Electron desktop app serves
 // itself from (see frontend/electron/main.cjs) — allowed by default so the desktop
@@ -101,6 +137,8 @@ using (var startupScope = app.Services.CreateScope())
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 app.UseCors("Frontend");
+
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

@@ -26,7 +26,8 @@ public record UserProfile(
     string? Bio,
     string? Pronouns,
     string? CustomStatusText,
-    string? CustomStatusEmoji);
+    string? CustomStatusEmoji,
+    bool TotpEnabled);
 
 public record PublicProfileDto(
     Guid UserId,
@@ -48,3 +49,24 @@ public record UpdateProfileRequest(
     string? BannerColor,
     string? CustomStatusText,
     string? CustomStatusEmoji);
+
+// Two-factor authentication (opt-in TOTP).
+
+/// <summary>
+/// Returned by LoginAsync. When RequiresTwoFactor is true, Result is null and the
+/// client must call POST /api/auth/2fa/verify with LoginToken plus the code from the
+/// user's authenticator app (or a recovery code) to actually receive tokens.
+/// </summary>
+public record LoginOutcome(bool RequiresTwoFactor, string? LoginToken, AuthResult? Result);
+
+public record VerifyTwoFactorRequest(string LoginToken, string Code);
+
+/// <summary>Returned by SetupTwoFactorAsync so the client can render a QR code (from OtpAuthUri) and a manual-entry fallback (SecretBase32).</summary>
+public record TwoFactorSetupResult(string SecretBase32, string OtpAuthUri);
+
+public record EnableTwoFactorRequest(string Code);
+
+/// <summary>RecoveryCodes are shown to the user exactly once — only their hashes are stored.</summary>
+public record EnableTwoFactorResult(IReadOnlyList<string> RecoveryCodes);
+
+public record DisableTwoFactorRequest(string Password);

@@ -4,6 +4,7 @@ using DiscordClone.Application.Auth;
 using DiscordClone.Application.Servers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.SignalR;
 
 namespace DiscordClone.Api.Controllers;
@@ -24,6 +25,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("register")]
+    [EnableRateLimiting("auth")]
     public async Task<ActionResult<AuthResult>> Register(RegisterRequest request, CancellationToken ct)
     {
         var result = await _authService.RegisterAsync(request, ct);
@@ -31,13 +33,47 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
-    public async Task<ActionResult<AuthResult>> Login(LoginRequest request, CancellationToken ct)
+    [EnableRateLimiting("auth")]
+    public async Task<ActionResult<LoginOutcome>> Login(LoginRequest request, CancellationToken ct)
     {
         var result = await _authService.LoginAsync(request, ct);
         return Ok(result);
     }
 
+    [HttpPost("2fa/verify")]
+    [EnableRateLimiting("auth")]
+    public async Task<ActionResult<AuthResult>> VerifyTwoFactor(VerifyTwoFactorRequest request, CancellationToken ct)
+    {
+        var result = await _authService.VerifyTwoFactorAsync(request, ct);
+        return Ok(result);
+    }
+
+    [Authorize]
+    [HttpPost("2fa/setup")]
+    public async Task<ActionResult<TwoFactorSetupResult>> SetupTwoFactor(CancellationToken ct)
+    {
+        var result = await _authService.SetupTwoFactorAsync(User.GetUserId(), ct);
+        return Ok(result);
+    }
+
+    [Authorize]
+    [HttpPost("2fa/enable")]
+    public async Task<ActionResult<EnableTwoFactorResult>> EnableTwoFactor(EnableTwoFactorRequest request, CancellationToken ct)
+    {
+        var result = await _authService.EnableTwoFactorAsync(User.GetUserId(), request, ct);
+        return Ok(result);
+    }
+
+    [Authorize]
+    [HttpPost("2fa/disable")]
+    public async Task<IActionResult> DisableTwoFactor(DisableTwoFactorRequest request, CancellationToken ct)
+    {
+        await _authService.DisableTwoFactorAsync(User.GetUserId(), request, ct);
+        return NoContent();
+    }
+
     [HttpPost("refresh")]
+    [EnableRateLimiting("auth")]
     public async Task<ActionResult<AuthResult>> Refresh(RefreshRequest request, CancellationToken ct)
     {
         var result = await _authService.RefreshAsync(request.RefreshToken, ct);

@@ -43,6 +43,7 @@ public static class DependencyInjection
 
         services.AddSingleton(JwtOptions.FromConfiguration(configuration));
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
+        services.AddSingleton<TotpSecretProtector>();
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IServerService, ServerService>();

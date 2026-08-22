@@ -44,16 +44,21 @@ public class S3StorageService : IStorageService
         await _client.PutBucketPolicyAsync(_options.Bucket, policy, ct);
     }
 
-    public async Task UploadAsync(string key, Stream content, string contentType, CancellationToken ct)
+    public async Task UploadAsync(string key, Stream content, string contentType, string? contentDisposition, CancellationToken ct)
     {
-        await _client.PutObjectAsync(new PutObjectRequest
+        var request = new PutObjectRequest
         {
             BucketName = _options.Bucket,
             Key = key,
             InputStream = content,
             ContentType = contentType,
             AutoCloseStream = false,
-        }, ct);
+        };
+
+        if (contentDisposition is not null)
+            request.Headers.ContentDisposition = contentDisposition;
+
+        await _client.PutObjectAsync(request, ct);
     }
 
     public string GetPublicUrl(string key) => $"{_options.PublicEndpoint.TrimEnd('/')}/{_options.Bucket}/{key}";
