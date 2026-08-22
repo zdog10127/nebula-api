@@ -15,6 +15,21 @@ public partial class ServerService : IServerService
 {
     private const long MaxIconSizeBytes = 10 * 1024 * 1024;
 
+    // Same allowlist AttachmentService uses for avatars/banners: server icons and custom
+    // emojis are rendered inline everywhere (member list, chat, reactions), so only
+    // known-safe raster image types are accepted — otherwise a malicious upload here (e.g.
+    // an .svg with an embedded <script>, disguised with an image content-type) could run
+    // in another member's browser the moment the icon/emoji loads.
+    private static readonly HashSet<string> AllowedImageContentTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/png", "image/jpeg", "image/webp", "image/gif",
+    };
+
+    private static readonly HashSet<string> AllowedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".webp", ".gif",
+    };
+
     private readonly MongoContext _mongo;
     private readonly IPresenceService _presenceService;
     private readonly IStorageService _storage;
@@ -162,8 +177,10 @@ public partial class ServerService : IServerService
         if (sizeBytes <= 0 || sizeBytes > MaxIconSizeBytes)
             throw new AppException($"Icon size must be between 1 byte and {MaxIconSizeBytes / (1024 * 1024)}MB.");
 
+        ValidateIsImage(fileName, contentType);
+
         var key = $"server-icons/{serverId}/{Guid.NewGuid()}-{SanitizeFileName(fileName)}";
-        await _storage.UploadAsync(key, content, contentType, ct);
+        await _storage.UploadAsync(key, content, contentType, null, ct);
         var url = _storage.GetPublicUrl(key);
 
         var update = Builders<Server>.Update.Set(s => s.IconUrl, url);
@@ -636,8 +653,13 @@ public partial class ServerService : IServerService
         if (sizeBytes <= 0 || sizeBytes > MaxIconSizeBytes)
             throw new AppException($"Emoji image size must be between 1 byte and {MaxIconSizeBytes / (1024 * 1024)}MB.");
 
+        // No file name/extension comes through for emoji uploads (see method signature) —
+        // only the claimed content-type is available to check, so that's the whole check.
+        if (!AllowedImageContentTypes.Contains(contentType))
+            throw new AppException("Only PNG, JPG, GIF or WEBP images are allowed.");
+
         var key = $"custom-emojis/{serverId}/{Guid.NewGuid()}-{trimmedName}";
-        await _storage.UploadAsync(key, content, contentType, ct);
+        await _storage.UploadAsync(key, content, contentType, null, ct);
 
         var emoji = new CustomEmoji
         {
@@ -782,6 +804,13 @@ public partial class ServerService : IServerService
             chars[i] = alphabet[bytes[i] % alphabet.Length];
 
         return new string(chars);
+    }
+
+    private static void ValidateIsImage(string fileName, string contentType)
+    {
+        var ext = Path.GetExtension(fileName);
+        if (string.IsNullOrEmpty(ext) || !AllowedImageExtensions.Contains(ext) || !AllowedImageContentTypes.Contains(contentType))
+            throw new AppException("Only PNG, JPG, GIF or WEBP images are allowed.");
     }
 
     private static string SanitizeFileName(string fileName)
